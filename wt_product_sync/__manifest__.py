@@ -11,8 +11,9 @@
     """,
     'author': 'Wizard Technolab',
     'website': 'http://www.wizardtechnolab.com',
-    'depends': ['website', 'mail', 'stock', 'sale'],
+    'depends': ['website', 'mail', 'stock', 'sale', 'website_sale'],
     'data': [
+        'data/ir_cron.xml',
         'security/ir.model.access.csv',
         'views/product_sync_view.xml',
         'views/product_template_view.xml',

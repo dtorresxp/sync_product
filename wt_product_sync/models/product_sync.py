@@ -1,6 +1,7 @@
 from odoo import api, fields, models, _
 import xmlrpc.client
 from odoo.exceptions import AccessError
+import datetime
 
 
 class ProductSync(models.Model):
@@ -29,6 +30,7 @@ class ProductSync(models.Model):
         res = super(ProductSync, self).create(vals)
         if res:
             ir_model = self.env['ir.model'].sudo().search([('model', '=', res._name)])
+            date = datetime.datetime.now() + datetime.timedelta(minutes=2)
             cron = self.env['ir.cron'].create({
                 'name': '[' + res.name + ']' + ' : Sync Product data',
                 'model_id': ir_model.id,
@@ -38,6 +40,7 @@ class ProductSync(models.Model):
                 'active': True,
                 'numbercall': -1,
                 'store_id': res.id,
+                'nextcall': date,
             })
             res.cron_id = cron.id
         return res
@@ -92,6 +95,9 @@ class ProductSync(models.Model):
                         'uom_name': db_product.get('uom_name'),
                         'barcode': db_product.get('barcode'),
                         'image_1920': db_product.get('image_1920'),
+                        'description_sale': db_product.get('description_sale'),
+                        'is_published': db_product.get('is_published'),
+                        'description_pickingin': db_product.get('description_pickingin'),
                     }
                     sync_unique_id = str(self.id) + str(db_product.get('id'))
                     product_tmpl_id = product_obj.search([('product_qnique_id', '=', sync_unique_id)])
@@ -101,6 +107,7 @@ class ProductSync(models.Model):
                         product_tmpl_id.store_id = self.id
                     else:
                         product_tmpl_id.write(values)
+
                     product_tmpl_id.list_price = db_product.get('list_price')
 
                     db_tmpl_attribute_line = db_product.get('valid_product_template_attribute_line_ids')
@@ -111,6 +118,18 @@ class ProductSync(models.Model):
                                 'product_id': varient_id.id,
                                 'location_id': warehouse.lot_stock_id.id,
                                 'inventory_quantity': db_product.get('qty_available'),
+                            })
+                    product_tmpl_id.product_template_image_ids.unlink()
+                    db_tmpl_image_ids = db_product.get('product_template_image_ids')
+                    for image in db_tmpl_image_ids:
+                        db_tmpl_image_id = models.execute_kw(db, uid, password,
+                                                             'product.image', 'search_read',
+                                                             [[['id', '=', image]]])
+                        if db_tmpl_image_id:
+                            product_tmpl_id.write({
+                                'product_template_image_ids': [
+                                    (0, 0, {'name': db_tmpl_image_id[0].get('name'),
+                                            'image_1920': db_tmpl_image_id[0].get('image_1920')})]
                             })
 
                     product_tmpl_id.attribute_line_ids.unlink()
@@ -159,8 +178,8 @@ class ProductSync(models.Model):
                             if not update_varients:
                                 varient_ref = varient_rec.get('partner_ref').split('] ')[1]
                                 update_varients = self_varients.filtered(
-                                    lambda
-                                        x: x.partner_ref == varient_ref and x.product_tmpl_id.id == product_tmpl_id.id)
+                                    lambda x: x.partner_ref == varient_ref and
+                                              x.product_tmpl_id.id == product_tmpl_id.id)
                             update_varients.update({
                                 'name': varient_rec.get('name'),
                                 'type': varient_rec.get('type'),
@@ -176,7 +195,10 @@ class ProductSync(models.Model):
                                 'list_price': varient_rec.get('list_price'),
                                 'volume_uom_name': varient_rec.get('volume_uom_name'),
                                 'weight_uom_name': varient_rec.get('weight_uom_name'),
-                                'image_variant_1920': varient_rec.get('image_variant_1920')
+                                'image_variant_1920': varient_rec.get('image_variant_1920'),
+                                'description_sale': db_product.get('description_sale'),
+                                'is_published': db_product.get('is_published'),
+                                'description_pickingin': db_product.get('description_pickingin'),
                             })
 
                             for varient in varient_rec.get('product_template_attribute_value_ids'):
@@ -213,8 +235,10 @@ class IrCron(models.Model):
 
     store_id = fields.Many2one('product.sync', string='Store', readonly=True)
 
-    def method_direct_trigger(self):
-        res = super(IrCron, self).method_direct_trigger()
-        if self.store_id:
-            self.store_id.action_sync()
-        return res
+    def product_sync_crons(self):
+        now_datetime = datetime.datetime.now().strftime('%m/%d/%Y %H:%M')
+        crons = self.env['ir.cron'].search([])
+        if crons:
+            for cron in crons:
+                if cron and cron.nextcall.strftime('%m/%d/%Y %H:%M') == now_datetime and cron.store_id:
+                    cron.store_id.action_sync()
